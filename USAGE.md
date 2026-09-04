@@ -114,13 +114,115 @@ nhà cung cấp. Dữ liệu thô có ở `GET /quota`.
 | Gemini | Không công bố — chỉ xác nhận gọi được |
 | OrcaRouter | Chỉ có cờ `X-Credits-Low`, không có số liệu |
 | Alibaba | Không công bố header quota |
-| Ollama | Không công bố — chỉ xác nhận gọi được |
+| Ollama | **Session + weekly (%) và số request từng model** — cần `OLLAMA_API_KEY` |
 
 > Groq và Cerebras chỉ trả hạn mức **kèm theo một request thật**, không có ở
 > `/models`. Nên mỗi lần bấm "Kiểm tra lại" tốn 1 request (1 token) của mỗi
 > nhà đó. OpenRouter đọc từ endpoint riêng nên không tốn gì.
 
 Nếu bạn đã bật `GATEWAY_API_KEY`, trang sẽ hiện ô nhập key.
+
+---
+
+## 4c. Triển khai lên máy production
+
+Model Ollama của bạn đều là **cloud** — chúng chỉ nặng vài trăm byte (manifest),
+không có trọng số, và `remote_host` trỏ về `ollama.com`. Nói cách khác Ollama
+trên máy dev chỉ là một proxy có xác thực. Có ba cách đưa lên server.
+
+### Cách 1 — Trỏ thẳng vào API của ollama.com (khuyên dùng)
+
+Không cài gì trên server. Lấy API key tại <https://ollama.com/settings/keys>,
+rồi trong `.env` của production:
+
+```ini
+OLLAMA_BASE_URL=https://ollama.com/v1
+OLLAMA_API_KEY=<key cua ban>
+
+# Model bo hau to -cloud
+LOCAL_OLLAMA_MODEL=gemma4:31b
+FAST_OLLAMA_MODEL=gpt-oss:120b
+REASONING_OLLAMA_MODEL=gpt-oss:120b
+FREE_OLLAMA_MODEL=gemma4:31b
+CODING_OLLAMA_MODEL=gemma4:31b
+```
+
+API giữ nguyên hoàn toàn, alias `local` vẫn chạy, không cần daemon nào. Tên model
+bỏ hậu tố `-cloud` vì đó là quy ước của client Ollama, không phải của API.
+
+`ollama.com/v1` liệt kê 19 model, nhưng **gói của bạn chỉ mở 2 cái**:
+
+| Model | Latency | |
+|---|---|---|
+| `gpt-oss:120b` | 0.86–1.08s | ✅ |
+| `gemma4:31b` | 1.36–1.41s | ✅ |
+| `glm-5.3`, `kimi-k3`, `qwen3.5:397b`… | — | ❌ *"requires a subscription or extra usage"* |
+
+Giống hệt các model `:cloud` trên máy dev: chỉ `gemma4:31b-cloud` và
+`gpt-oss:120b-cloud` chạy, các cái khác trả 402.
+
+`https://ollama.com/v1/messages` **cũng nói chuẩn Anthropic**, nên Claude Code
+vẫn hoạt động ở chế độ production.
+
+### Xem usage của Ollama
+
+`https://ollama.com/api/usage` trả về mức dùng thật. Chỉ cần đặt
+`OLLAMA_API_KEY`, gateway sẽ đọc và hiện lên dashboard — **kể cả khi chat vẫn đi
+qua daemon local**, vì cả hai đường đều tiêu quota của cùng một tài khoản.
+
+```
+Ollama                                  ĐANG HOẠT ĐỘNG
+Tuần này: web search ×6, gemma4:31b ×189, gpt-oss:120b ×176
+
+Session  SESSION      0.1% / 100
+Weekly   WEEK        16.1% / 100
+```
+
+Daemon local (`localhost:11434/api/usage`) trả 404 — endpoint này chỉ có trên
+ollama.com.
+
+### Cách 2 — Cài Ollama trên server
+
+Nếu bạn muốn giữ đúng daemon Ollama:
+
+1. Cài Ollama trên server
+2. Chép `~/.ollama/id_ed25519` và `id_ed25519.pub` từ máy dev sang server —
+   đây là khoá xác thực với tài khoản ollama.com
+3. `ollama pull gemma4:31b-cloud` (chỉ tải manifest, vài trăm byte)
+4. `.env` giữ nguyên `OLLAMA_BASE_URL=http://localhost:11434`
+
+Đổi lại bạn phải chạy và giám sát thêm một tiến trình, và cùng một khoá tài
+khoản nằm trên hai máy.
+
+### Cách 3 — Bỏ hẳn Ollama
+
+```ini
+DISABLED_PROVIDERS=ollama
+```
+
+Provider bị tắt biến mất khỏi mọi chuỗi fallback, khỏi `/v1/models` và `/quota`.
+Ngăn cách bằng dấu phẩy nếu tắt nhiều: `ollama,gemini`.
+
+Lưu ý alias `local` sẽ trả 503 kèm lý do rõ ràng, vì nó chỉ có mỗi Ollama:
+
+```json
+{"detail": "Alias 'local' has no provider left: every hop is in DISABLED_PROVIDERS"}
+```
+
+Các alias khác không bị ảnh hưởng — chúng chỉ mất chặng cuối.
+
+### So sánh
+
+| | Cách 1 (ollama.com) | Cách 2 (cài Ollama) | Cách 3 (tắt) |
+|---|---|---|---|
+| Cài trên server | không | có | không |
+| API giữ nguyên | ✅ | ✅ | ⚠️ mất `local` |
+| Sửa `.env` | base URL + key + tên model | không | 1 dòng |
+| Cần chép khoá | không | có | không |
+
+> Khi `OLLAMA_BASE_URL` không phải localhost, gateway **bắt buộc** phải có
+> `OLLAMA_API_KEY`, nếu thiếu sẽ báo `ollama: API key not configured` ngay thay
+> vì để ollama.com trả 401 khó hiểu.
 
 ---
 

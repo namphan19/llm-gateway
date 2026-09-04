@@ -31,9 +31,17 @@ def _cloudflare_base_url() -> str:
 
 
 def _ollama_base_url() -> str:
-    """Ollama serves the OpenAI-compatible API under /v1; tolerate a URL without it."""
+    """Ollama serves the OpenAI-compatible API under /v1; tolerate a URL without it.
+
+    The same setting also points at Ollama's hosted API (https://ollama.com/v1),
+    which needs OLLAMA_API_KEY — a local daemon does not.
+    """
     raw = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
     return raw if raw.endswith("/v1") else raw + "/v1"
+
+
+def _is_local(url: str) -> bool:
+    return any(h in url for h in ("localhost", "127.0.0.1", "0.0.0.0", "::1"))
 
 
 PROVIDERS: Dict[str, Dict[str, str]] = {
@@ -137,21 +145,33 @@ ALIAS_DEFAULTS: Dict[str, List[Tuple[str, str]]] = {
 }
 
 
+# A machine that lacks a provider entirely (production without Ollama, say)
+# sets DISABLED_PROVIDERS so the hop is dropped from every chain instead of
+# failing on each request.
+DISABLED_PROVIDERS = {
+    p.strip().lower()
+    for p in os.getenv("DISABLED_PROVIDERS", "").split(",")
+    if p.strip()
+}
+
+
 def _build_routes() -> Dict[str, List[Tuple[str, str]]]:
-    return {
-        alias: [
+    routes = {}
+    for alias, chain in ALIAS_DEFAULTS.items():
+        routes[alias] = [
             (provider, os.getenv(f"{alias.upper()}_{provider.upper()}_MODEL", default))
             for provider, default in chain
+            if provider not in DISABLED_PROVIDERS
         ]
-        for alias, chain in ALIAS_DEFAULTS.items()
-    }
+    return routes
 
 
 ROUTES = _build_routes()
 
 # Order used for a bare model ID that is neither an alias nor provider-prefixed.
-DEFAULT_CHAIN = ["groq", "orcarouter", "cloudflare", "alibaba", "cerebras",
-                 "mistral", "openrouter", "gemini", "ollama"]
+DEFAULT_CHAIN = [p for p in ["groq", "orcarouter", "cloudflare", "alibaba", "cerebras",
+                             "mistral", "openrouter", "gemini", "ollama"]
+                 if p not in DISABLED_PROVIDERS]
 
 OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key"
 
@@ -176,7 +196,11 @@ class ChatRequest(BaseModel):
 def plan(requested: str) -> List[Tuple[str, str]]:
     """Return the ordered [(provider, model)] attempts for a requested model."""
     if requested in ROUTES:
-        return list(ROUTES[requested])
+        hops = list(ROUTES[requested])
+        if not hops:
+            raise HTTPException(503, f"Alias '{requested}' has no provider left: "
+                                     f"every hop is in DISABLED_PROVIDERS")
+        return hops
 
     # Explicit provider:model syntax, e.g. groq:openai/gpt-oss-120b.
     # Ollama tags contain a colon too (gemma4:31b-cloud), so only split when the
@@ -206,7 +230,11 @@ def body_for(req: ChatRequest, model: str) -> Dict[str, Any]:
 
 def request_parts(provider: str, model: str, req: ChatRequest):
     cfg = PROVIDERS[provider]
-    if provider != "ollama" and not cfg["api_key"]:
+    if provider in DISABLED_PROVIDERS:
+        raise RuntimeError(f"{provider}: disabled via DISABLED_PROVIDERS")
+    # Ollama needs no key only while it is the daemon on this machine.
+    needs_key = provider != "ollama" or not _is_local(cfg["base_url"])
+    if needs_key and not cfg["api_key"]:
         raise RuntimeError(f"{provider}: API key not configured")
     if not cfg["base_url"]:
         raise RuntimeError(f"{provider}: CLOUDFLARE_ACCOUNT_ID not configured")
@@ -317,9 +345,10 @@ async def models(authorization: Optional[str] = Header(default=None)):
             "owned_by": "free-llm-gateway",
             "route": [{"provider": p, "model": m} for p, m in chain],
         }
-        for alias, chain in ROUTES.items()
+        for alias, chain in ROUTES.items() if chain
     ]
-    data += [{"id": f"{p}:<model>", "object": "model", "owned_by": p} for p in PROVIDERS]
+    data += [{"id": f"{p}:<model>", "object": "model", "owned_by": p}
+             for p in PROVIDERS if p not in DISABLED_PROVIDERS]
     return {"object": "list", "data": data}
 
 
@@ -463,6 +492,44 @@ async def quota_openrouter() -> Dict[str, Any]:
     }
 
 
+# Ollama publishes usage only on its hosted side, never on the local daemon.
+# Both routes bill the same account, so the key alone is enough to read it —
+# whether chat traffic goes direct or through the daemon on this machine.
+OLLAMA_USAGE_URL = "https://ollama.com/api/usage"
+
+
+async def quota_ollama() -> Dict[str, Any]:
+    key = PROVIDERS["ollama"]["api_key"]
+    if not key or key == "ollama":          # the placeholder default
+        return await quota_reachable("ollama")
+
+    r = await app.state.http.get(OLLAMA_USAGE_URL,
+                                 headers={"Authorization": f"Bearer {key}"})
+    if r.status_code >= 400:
+        return await quota_reachable("ollama")
+
+    d = r.json()
+    limits = []
+    for label, window, key_name in (("Session", "session", "session"),
+                                    ("Weekly", "week", "weekly")):
+        block = d.get("limits", {}).get(key_name) or {}
+        if "usage" not in block:
+            continue
+        # usage is a 0..1 fraction of the plan's allowance
+        limits.append({
+            "label": label, "window": window,
+            "limit": 100, "remaining": None,
+            "used": round(float(block["usage"]) * 100, 2), "unit": "%",
+            "reset": None,
+        })
+    calls = {m["name"]: m["request_count"]
+             for m in (d.get("limits", {}).get("weekly") or {}).get("models", [])}
+    detail = ("Tuần này: " + ", ".join(f"{n} ×{c}" for n, c in calls.items())
+              if calls else None)
+    return {"status": "ok", "detail": detail,
+            "probe_model": None, "limits": limits}
+
+
 async def quota_reachable(provider: str) -> Dict[str, Any]:
     """Gemini and Ollama publish no quota at all, so only report reachability."""
     model = probe_model(provider)
@@ -499,6 +566,8 @@ async def quota_for(provider: str) -> Dict[str, Any]:
     try:
         if provider == "openrouter":
             result = await quota_openrouter()
+        elif provider == "ollama":
+            result = await quota_ollama()
         elif provider in RATE_HEADERS:
             result = await quota_from_headers(provider)
         else:
@@ -512,7 +581,8 @@ async def quota_for(provider: str) -> Dict[str, Any]:
 async def quota(authorization: Optional[str] = Header(default=None)):
     check_auth(authorization)
     started = time.perf_counter()
-    results = await asyncio.gather(*(quota_for(p) for p in PROVIDERS))
+    live = [p for p in PROVIDERS if p not in DISABLED_PROVIDERS]
+    results = await asyncio.gather(*(quota_for(p) for p in live))
     return {
         "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "elapsed_seconds": round(time.perf_counter() - started, 2),
@@ -526,7 +596,7 @@ async def quota(authorization: Optional[str] = Header(default=None)):
 # OrcaRouter), so requests are proxied untouched — no format translation.
 # Cloudflare exposes the endpoint but allows it for no model on this account;
 # Groq, Cerebras, Mistral and Gemini return 404.
-ANTHROPIC_PROVIDERS = {"ollama", "openrouter", "orcarouter"}
+ANTHROPIC_PROVIDERS = {"ollama", "openrouter", "orcarouter"} - DISABLED_PROVIDERS
 
 # Derived from the chat routing so the two sides cannot drift apart.
 ANTHROPIC_ROUTES = {

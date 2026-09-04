@@ -62,14 +62,36 @@ Ollama tags that contain a colon work as expected.
 
 `GET /v1/models` lists the aliases together with their resolved chains.
 
+## Deploying to a host without Ollama
+
+Ollama `*-cloud` models carry no weights — the local daemon is an authenticated
+proxy to ollama.com. So a production host has three options:
+
+1. **Point at the hosted API.** `OLLAMA_BASE_URL=https://ollama.com/v1` plus
+   `OLLAMA_API_KEY` from <https://ollama.com/settings/keys>, and drop the
+   `-cloud` suffix from the model ids. Nothing to install; the API is unchanged,
+   and `https://ollama.com/v1/messages` speaks Anthropic too, so Claude Code
+   keeps working.
+2. **Install Ollama** and copy `~/.ollama/id_ed25519{,.pub}` from the dev machine
+   so it authenticates as the same account.
+3. **Turn it off.** `DISABLED_PROVIDERS=ollama` (comma-separated) removes a
+   provider from every chain, from `/v1/models` and from `/quota`. An alias left
+   with no hops answers 503 naming the cause rather than failing obscurely, and a
+   forced `ollama:...` model is refused the same way.
+
+When `OLLAMA_BASE_URL` is not localhost, `OLLAMA_API_KEY` becomes required.
+
 ## Quota dashboard
 
 `GET /` serves a dashboard showing each provider's remaining limits; `GET /quota`
 returns the same data as JSON. Cerebras reports requests and tokens per
 minute/hour/day, Groq reports both plus reset times, Mistral reports both per
 minute, OpenRouter reports spend.
-Cloudflare reports the neuron cost of each call but not the balance left. Gemini
-and Ollama publish no quota at all, so they only show reachability.
+Ollama reports session and weekly usage plus per-model request counts, read from
+`https://ollama.com/api/usage` whenever `OLLAMA_API_KEY` is set — the local
+daemon has no such endpoint, but both routes bill the same account. Cloudflare
+reports the neuron cost of each call but not the balance left. Gemini, Alibaba
+and OrcaRouter publish no quota at all, so they only show reachability.
 
 Neither Groq nor Cerebras exposes rate-limit headers on `/models`, so a check
 costs one real 1-token request per provider. OpenRouter has a dedicated

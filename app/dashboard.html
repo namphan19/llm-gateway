@@ -158,7 +158,8 @@ const keyBox = document.getElementById('key');
 
 const LABEL = {
   ollama: 'Ollama', gemini: 'Gemini', groq: 'Groq', cerebras: 'Cerebras',
-  openrouter: 'OpenRouter', cloudflare: 'Cloudflare', mistral: 'Mistral'
+  openrouter: 'OpenRouter', cloudflare: 'Cloudflare', mistral: 'Mistral',
+  alibaba: 'Alibaba', orcarouter: 'OrcaRouter'
 };
 
 const STATUS = {
@@ -179,6 +180,7 @@ function fmt(n, unit) {
   if (n === null || n === undefined) return '—';
   if (unit === 'USD') return '$' + Number(n).toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
   if (unit === 'neurons') return Number(n).toFixed(2);
+  if (unit === '%') return Number(n).toFixed(2) + '%';
   return Number(n).toLocaleString('en-US');
 }
 
