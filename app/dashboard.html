@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quota · Free LLM Gateway</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap">
+<style>
+:root{
+  --ground:#F5F7F6; --surface:#FFFFFF; --surface-2:#EDF1F0;
+  --ink:#141D1B; --ink-soft:#57635F; --ink-faint:#8B9793;
+  --rule:#DCE3E0; --rule-soft:#E8EDEB;
+  --signal:#0E6B60; --signal-soft:#D8ECE8;
+  --ok:#2C6B3C; --warn:#8A5808; --crit:#9A2B2B;
+  --track:#DFE5E3;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#0E1312; --surface:#151B1A; --surface-2:#1B2322;
+    --ink:#E3EAE7; --ink-soft:#9AA7A3; --ink-faint:#6E7C78;
+    --rule:#26302E; --rule-soft:#1F2827;
+    --signal:#59C9B9; --signal-soft:#12312D;
+    --ok:#74C088; --warn:#D9A441; --crit:#E5776E;
+    --track:#232C2A;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#0E1312; --surface:#151B1A; --surface-2:#1B2322;
+  --ink:#E3EAE7; --ink-soft:#9AA7A3; --ink-faint:#6E7C78;
+  --rule:#26302E; --rule-soft:#1F2827;
+  --signal:#59C9B9; --signal-soft:#12312D;
+  --ok:#74C088; --warn:#D9A441; --crit:#E5776E;
+  --track:#232C2A;
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--ground); color:var(--ink);
+  font-family:"JetBrains Mono",ui-monospace,Consolas,monospace;
+  font-size:13px; line-height:1.5; -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1080px;margin:0 auto;padding:0 22px}
+
+header{background:var(--surface);border-bottom:1px solid var(--rule)}
+header .wrap{padding:24px 22px;display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;justify-content:space-between}
+h1{
+  font-family:Archivo,Arial,sans-serif;font-weight:700;font-size:26px;
+  letter-spacing:-.02em;margin:0;line-height:1.1;
+}
+.sub{color:var(--ink-soft);font-size:11.5px;margin:7px 0 0}
+.sub b{color:var(--signal);font-weight:500}
+.actions{display:flex;gap:8px;align-items:center}
+button{
+  font-family:inherit;font-size:12px;font-weight:500;cursor:pointer;
+  padding:8px 15px;border-radius:2px;border:1px solid var(--signal);
+  background:var(--signal);color:var(--ground);
+}
+button:hover{opacity:.87}
+button:disabled{opacity:.45;cursor:default}
+button.ghost{background:transparent;color:var(--signal)}
+button:focus-visible,input:focus-visible{outline:2px solid var(--signal);outline-offset:2px}
+input{
+  font-family:inherit;font-size:12px;padding:7px 10px;border-radius:2px;
+  border:1px solid var(--rule);background:var(--surface);color:var(--ink);width:150px;
+}
+
+.bar-note{
+  background:var(--signal-soft);border-left:2px solid var(--signal);
+  padding:9px 14px;font-size:11.5px;color:var(--ink-soft);margin:18px 0 0;
+}
+.bar-note b{color:var(--ink)}
+
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:14px;padding:18px 0 40px;align-items:start}
+
+.card{
+  background:var(--surface);border:1px solid var(--rule);border-radius:3px;
+  display:flex;flex-direction:column;
+}
+.card-head{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:13px 15px;border-bottom:1px solid var(--rule-soft);
+}
+.pname{font-family:Archivo,Arial,sans-serif;font-size:15px;font-weight:600;letter-spacing:-.01em}
+.pmeta{font-size:10.5px;color:var(--ink-faint);margin-top:2px}
+.chip{
+  font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+  padding:3px 7px;border-radius:2px;white-space:nowrap;flex:none;
+}
+.chip.ok{background:color-mix(in srgb,var(--ok) 15%,transparent);color:var(--ok)}
+.chip.warn{background:color-mix(in srgb,var(--warn) 17%,transparent);color:var(--warn)}
+.chip.crit{background:color-mix(in srgb,var(--crit) 14%,transparent);color:var(--crit)}
+.chip.mute{background:var(--surface-2);color:var(--ink-faint);border:1px solid var(--rule)}
+
+.body{padding:13px 15px;display:flex;flex-direction:column;gap:13px;flex:1}
+.empty{color:var(--ink-faint);font-size:11.5px;line-height:1.6;margin:0}
+
+.metric{display:flex;flex-direction:column;gap:5px}
+.mtop{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.mlabel{font-size:11px;color:var(--ink-soft)}
+.mlabel .win{color:var(--ink-faint);font-size:10px;text-transform:uppercase;letter-spacing:.07em;margin-left:5px}
+.mval{font-size:11.5px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.mval b{font-weight:700}
+.mval .of{color:var(--ink-faint)}
+.track{height:5px;background:var(--track);border-radius:3px;overflow:hidden}
+.fill{height:100%;background:var(--signal);border-radius:3px;transition:width .35s ease}
+.fill.warn{background:var(--warn)}
+.fill.crit{background:var(--crit)}
+.mreset{font-size:10px;color:var(--ink-faint)}
+
+.err{
+  font-size:11px;color:var(--crit);background:color-mix(in srgb,var(--crit) 7%,transparent);
+  padding:8px 10px;border-radius:2px;word-break:break-word;line-height:1.55;margin:0;
+}
+footer{border-top:1px solid var(--rule);background:var(--surface)}
+footer .wrap{padding:16px 22px;font-size:10.5px;color:var(--ink-faint);display:flex;flex-wrap:wrap;gap:6px 20px}
+@media (prefers-reduced-motion:reduce){.fill{transition:none}}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div>
+      <h1>Quota</h1>
+      <p class="sub" id="stamp">Đang kiểm tra…</p>
+    </div>
+    <div class="actions">
+      <input id="key" type="password" placeholder="GATEWAY_API_KEY" autocomplete="off" hidden>
+      <button id="refresh">Kiểm tra lại</button>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <p class="bar-note">
+    Groq, Cerebras và Mistral chỉ trả hạn mức kèm theo một request thật, nên mỗi lần kiểm tra
+    <b>tốn 1 request (1 token)</b> của mỗi provider đó. Cloudflare và Gemini cũng bị thăm dò
+    để xác nhận kết nối. OpenRouter đọc từ endpoint riêng, không tốn gì.
+  </p>
+  <div class="grid" id="grid"></div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <span>Free LLM Gateway</span>
+    <span>GET /quota</span>
+    <span id="took"></span>
+  </div>
+</footer>
+
+<script>
+const grid = document.getElementById('grid');
+const stamp = document.getElementById('stamp');
+const took = document.getElementById('took');
+const btn = document.getElementById('refresh');
+const keyBox = document.getElementById('key');
+
+const LABEL = {
+  ollama: 'Ollama', gemini: 'Gemini', groq: 'Groq', cerebras: 'Cerebras',
+  openrouter: 'OpenRouter', cloudflare: 'Cloudflare', mistral: 'Mistral'
+};
+
+const STATUS = {
+  ok:        ['ok',   'Đang hoạt động'],
+  reachable: ['ok',   'Kết nối được'],
+  limited:   ['warn', 'Đang bị giới hạn'],
+  no_key:    ['mute', 'Chưa có key'],
+  unsupported:['mute','Không hỗ trợ'],
+  error:     ['crit', 'Lỗi']
+};
+
+function pct(used, limit) {
+  if (typeof used !== 'number' || typeof limit !== 'number' || limit <= 0) return null;
+  return Math.max(0, Math.min(100, (used / limit) * 100));
+}
+
+function fmt(n, unit) {
+  if (n === null || n === undefined) return '—';
+  if (unit === 'USD') return '$' + Number(n).toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
+  if (unit === 'neurons') return Number(n).toFixed(2);
+  return Number(n).toLocaleString('en-US');
+}
+
+function metricEl(m) {
+  const p = pct(m.used, m.limit);
+  const level = p === null ? '' : p >= 90 ? ' crit' : p >= 70 ? ' warn' : '';
+  const el = document.createElement('div');
+  el.className = 'metric';
+
+  const top = document.createElement('div');
+  top.className = 'mtop';
+  const label = document.createElement('span');
+  label.className = 'mlabel';
+  label.textContent = m.label;
+  if (m.window) {
+    const w = document.createElement('span');
+    w.className = 'win';
+    w.textContent = m.window;
+    label.appendChild(w);
+  }
+  const val = document.createElement('span');
+  val.className = 'mval';
+  if (typeof m.remaining === 'number' && typeof m.limit === 'number') {
+    val.innerHTML = '<b>' + fmt(m.remaining, m.unit) + '</b> <span class="of">còn / ' + fmt(m.limit, m.unit) + '</span>';
+  } else if (m.used !== null && m.used !== undefined) {
+    val.innerHTML = '<b>' + fmt(m.used, m.unit) + '</b> <span class="of">đã dùng</span>';
+  } else {
+    val.innerHTML = '<span class="of">không giới hạn</span>';
+  }
+  top.append(label, val);
+  el.appendChild(top);
+
+  if (p !== null) {
+    const track = document.createElement('div');
+    track.className = 'track';
+    const fill = document.createElement('div');
+    fill.className = 'fill' + level;
+    fill.style.width = p.toFixed(1) + '%';
+    track.appendChild(fill);
+    el.appendChild(track);
+  }
+  if (m.used === null && typeof m.remaining === 'number' && typeof m.limit === 'number' && m.remaining > m.limit) {
+    const n = document.createElement('p');
+    n.className = 'mreset';
+    n.textContent = 'provider báo remaining > limit — số liệu của họ mâu thuẫn';
+    el.appendChild(n);
+  }
+  if (m.reset) {
+    const r = document.createElement('p');
+    r.className = 'mreset';
+    r.textContent = 'reset sau ' + m.reset;
+    el.appendChild(r);
+  }
+  return el;
+}
+
+function cardEl(p) {
+  const [cls, text] = STATUS[p.status] || ['mute', p.status];
+  const card = document.createElement('div');
+  card.className = 'card';
+
+  const head = document.createElement('div');
+  head.className = 'card-head';
+  const left = document.createElement('div');
+  const name = document.createElement('div');
+  name.className = 'pname';
+  name.textContent = LABEL[p.provider] || p.provider;
+  left.appendChild(name);
+  if (p.probe_model) {
+    const meta = document.createElement('div');
+    meta.className = 'pmeta';
+    meta.textContent = p.probe_model;
+    left.appendChild(meta);
+  }
+  const chip = document.createElement('span');
+  chip.className = 'chip ' + cls;
+  chip.textContent = text;
+  head.append(left, chip);
+
+  const body = document.createElement('div');
+  body.className = 'body';
+  const limits = p.limits || [];
+
+  if (p.status === 'error') {
+    const e = document.createElement('p');
+    e.className = 'err';
+    e.textContent = p.detail || 'Lỗi không xác định';
+    body.appendChild(e);
+  } else if (limits.length === 0) {
+    const e = document.createElement('p');
+    e.className = 'empty';
+    e.textContent = p.status === 'reachable'
+      ? 'Provider này không công bố quota qua API. Chỉ xác nhận được là gọi tới nơi.'
+      : (p.detail || 'Không có dữ liệu quota.');
+    body.appendChild(e);
+  } else {
+    limits.forEach(m => body.appendChild(metricEl(m)));
+  }
+
+  card.append(head, body);
+  return card;
+}
+
+async function load() {
+  btn.disabled = true;
+  btn.textContent = 'Đang kiểm tra…';
+  const headers = {};
+  const k = keyBox.value.trim();
+  if (k) headers['Authorization'] = 'Bearer ' + k;
+
+  try {
+    const res = await fetch('/quota', { headers });
+    if (res.status === 401) {
+      keyBox.hidden = false;
+      stamp.textContent = 'Cần GATEWAY_API_KEY để xem quota.';
+      return;
+    }
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+
+    try { if (k) localStorage.setItem('gwkey', k); } catch (e) {}
+
+    // Providers that actually report numbers lead; the ones with nothing to
+    // show sink to the bottom instead of opening a hole in the first row.
+    const rank = p => (p.limits && p.limits.length ? 0 : p.status === 'error' ? 2 : 1);
+    const ordered = data.providers.slice().sort((a, b) => rank(a) - rank(b));
+    grid.replaceChildren(...ordered.map(cardEl));
+    stamp.innerHTML = 'Kiểm tra lúc <b>' +
+      new Date(data.checked_at).toLocaleTimeString('vi-VN') + '</b> · ' +
+      data.providers.length + ' provider';
+    took.textContent = data.elapsed_seconds + 's';
+  } catch (err) {
+    stamp.textContent = 'Không gọi được /quota — gateway còn chạy không? (' + err.message + ')';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Kiểm tra lại';
+  }
+}
+
+try {
+  const saved = localStorage.getItem('gwkey');
+  if (saved) { keyBox.value = saved; keyBox.hidden = false; }
+} catch (e) {}
+
+btn.addEventListener('click', load);
+keyBox.addEventListener('keydown', e => { if (e.key === 'Enter') load(); });
+load();
+</script>
+</body>
+</html>
